@@ -1,4 +1,4 @@
-torch
-transformers
-fastapi
-uvicorn
+transformers>=4.40.0
+torch>=2.1.0
+accelerate
+runpod
