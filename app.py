@@ -1,30 +1,46 @@
 import os
-from fastapi import FastAPI
-from pydantic import BaseModel
-from transformers import pipeline
+import runpod
+from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
+import torch
 
-# Get Hugging Face token from RunPod secrets
-hf_token = os.getenv("HF_TOKEN")
-
-# Load your private model from Hugging Face
-pipe = pipeline(
-    "text-generation",
-    model="askfjhaskjgh/UbermenschetienASI",  # your HF repo name
-    use_auth_token=hf_token
+# Load model from Hugging Face
+MODEL = "askfjhaskjgh/UbermenschetienASI"
+tokenizer = AutoTokenizer.from_pretrained(MODEL)
+model = AutoModelForCausalLM.from_pretrained(
+    MODEL,
+    torch_dtype=torch.float16,
+    device_map="auto"
 )
 
-app = FastAPI()
+pipe = pipeline("text-generation", model=model, tokenizer=tokenizer)
 
-class Request(BaseModel):
-    prompt: str
+# Handler for RunPod serverless
+def handler(job):
+    # Input should be: { "messages": [ {"role": "user", "content": "Hello"}, {"role": "assistant", "content": "Hi!"}, ... ] }
+    messages = job["input"].get("messages", [])
+    if not messages:
+        return {"error": "No messages provided."}
 
-@app.get("/health")
-def health():
-    return {"status": "ok"}
+    # Build conversation context
+    conversation = ""
+    for msg in messages:
+        role = msg.get("role", "user")
+        content = msg.get("content", "")
+        conversation += f"{role}: {content}\n"
 
-@app.post("/infer")
-def infer(request: Request):
-    output = pipe(request.prompt, max_length=200)[0]["generated_text"]
-    return {"result": output}
+    # Generate response
+    outputs = pipe(
+        conversation + "assistant:",
+        max_length=300,
+        do_sample=True,
+        temperature=0.7,
+        top_p=0.9,
+        num_return_sequences=1
+    )
 
+    reply = outputs[0]["generated_text"].split("assistant:")[-1].strip()
+    return {"reply": reply}
+
+# Start RunPod serverless
+runpod.serverless.start({"handler": handler})
 
