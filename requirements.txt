@@ -1,5 +1,7 @@
 torch
 transformers
-safetensors
 accelerate
+safetensors
 runpod
+protobuf>=4.25.3
+sentencepiece
