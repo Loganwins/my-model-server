@@ -1,6 +1,7 @@
-transformers==4.43.3
-accelerate>=0.33.0
-safetensors>=0.4.3
-runpod>=1.6.0
-protobuf>=4.25.3
-sentencepiece>=0.1.99
+runpod
+transformers>=4.43
+accelerate>=0.33
+safetensors>=0.4
+tokenizers>=0.19
+protobuf>=4.25
+sentencepiece>=0.2   # safe for LLaMA-style tokenizers
