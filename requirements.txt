@@ -1,7 +1,9 @@
+torch
+transformers>=4.43.3
+tokenizers>=0.19.1
+accelerate
+safetensors
 runpod
-transformers>=4.43
-accelerate>=0.33
-safetensors>=0.4
-tokenizers>=0.19
-protobuf>=4.25
-sentencepiece>=0.2   # safe for LLaMA-style tokenizers
+protobuf>=4.25.3
+sentencepiece
+tiktoken>=0.7.0
