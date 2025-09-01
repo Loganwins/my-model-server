@@ -6,4 +6,3 @@ runpod
 protobuf>=4.25.3
 sentencepiece
 tiktoken>=0.7.0
-# omit torch here if your Docker base already includes it
