@@ -1,20 +1,29 @@
-FROM python:3.10-slim
+# ---- Base image: PyTorch + CUDA on Ubuntu 22.04 ----
+FROM runpod/pytorch:2.3.1-py3.10-cuda12.1.1
 
+# Workdir
 WORKDIR /app
 
-# minimal system deps
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    git build-essential && \
-    rm -rf /var/lib/apt/lists/*
+# (Optional) lightweight tools
+RUN apt-get update && apt-get install -y --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/*
 
+# Copy requirements first (better layer cache)
 COPY requirements.txt .
 
-# Install CUDA 12.1 build of torch (GPU) first
-RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cu121 \
-    torch==2.3.1 && \
-    pip install --no-cache-dir -r requirements.txt
+# Install deps (keep torch as-is; base already has CUDA torch)
+# The extra-index ensures any torch re-install stays on CUDA wheels if needed.
+RUN python -m pip install --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt \
+      --extra-index-url https://download.pytorch.org/whl/cu121
 
+# Copy app code
 COPY . .
 
-# Queue worker (not a web server)
+# Useful envs
+ENV PYTHONUNBUFFERED=1 \
+    TRANSFORMERS_NO_ADVISORY_WARNINGS=1 \
+    HF_HOME=/root/.cache/huggingface
+
+# Start the RunPod worker (Queue endpoints)
 CMD ["python", "app.py"]
