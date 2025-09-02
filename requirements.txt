@@ -1,8 +1,6 @@
-transformers>=4.43
-accelerate>=0.33
-sentencepiece>=0.2
-tiktoken>=0.7
-protobuf>=4.25
-fastapi
-uvicorn
-runpod
+transformers==4.44.2
+tokenizers==0.19.1
+sentencepiece==0.2.0
+huggingface_hub>=0.24.0
+accelerate>=0.33.0
+runpod==1.5.2
