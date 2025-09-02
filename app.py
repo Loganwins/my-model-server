@@ -1,109 +1,176 @@
 import os
+import json
 import runpod
-from typing import List, Dict, Any
+from typing import Any, Dict, List
 
 import torch
-import transformers
-import tokenizers
-from transformers import AutoTokenizer, AutoModelForCausalLM
+from transformers import (
+    AutoTokenizer,
+    AutoModelForCausalLM,
+    __version__ as transformers_version,
+)
+from huggingface_hub import login, list_repo_files, __version__ as hub_version
 
-HF_TOKEN = os.getenv("HF_TOKEN")
-MODEL_ID = "askfjhaskjgh/UbermenschetienASI"
+# ---- Config -----------------------------------------------------------------
+MODEL_ID = os.getenv("MODEL_ID", "askfjhaskjgh/UbermenschetienASI")
 
+# Read HF token from either name (we set BOTH in RunPod):
+HF_TOKEN = (
+    os.getenv("HF_TOKEN")
+    or os.getenv("HUGGINGFACE_HUB_TOKEN")
+    or os.getenv("HUGGINGFACEHUB_API_TOKEN")
+)
+
+# Keep cache paths stable inside the container
+os.environ.setdefault("HF_HOME", "/root/.cache/huggingface")
+os.environ.setdefault("TRANSFORMERS_CACHE", "/root/.cache/huggingface/transformers")
+os.environ.setdefault("HF_HUB_ENABLE_HF_TRANSFER", "1")  # faster downloads
+
+# -----------------------------------------------------------------------------
 tokenizer = None
 model = None
 
-def _boot_banner():
-    print("=== [boot] ===")
-    print(f"[boot] transformers: {transformers.__version__}")
-    print(f"[boot] tokenizers  : {tokenizers.__version__}")
-    print(f"[boot] CUDA avail? : {torch.cuda.is_available()}")
-    print(f"[boot] ENV TRANSFORMERS_NO_FAST_TOKENIZER = {os.getenv('TRANSFORMERS_NO_FAST_TOKENIZER')}")
-    print("================")
 
-def _lazy_load():
-    """Load the FAST tokenizer (uses tokenizer.json) and the model once."""
+def _ensure_hf_login() -> None:
+    """Make sure the hub knows our token (no-op if already ok)."""
+    if not HF_TOKEN:
+        raise RuntimeError("HF token is missing; set HF_TOKEN / HUGGINGFACE_HUB_TOKEN in RunPod.")
+    try:
+        login(token=HF_TOKEN, add_to_git_credential=False)
+    except Exception:
+        # best-effort; even if login() fails, passing token=... still works
+        pass
+
+
+def _lazy_load() -> None:
+    """Load tokenizer and model once, with robust fallbacks."""
     global tokenizer, model
     if tokenizer is not None and model is not None:
         return
 
-    _boot_banner()
+    _ensure_hf_login()
 
-    tok_kwargs = dict(use_fast=True)  # <- force FAST
-    if HF_TOKEN:
-        tok_kwargs["token"] = HF_TOKEN
+    # Quick permission check (gives clearer error than from_pretrained)
+    try:
+        _ = list_repo_files(MODEL_ID, token=HF_TOKEN)
+    except Exception as e:
+        raise RuntimeError(f"HF auth/list failed for '{MODEL_ID}': {e}")
 
-    print("[boot] loading FAST tokenizer…")
-    t = AutoTokenizer.from_pretrained(MODEL_ID, **tok_kwargs)
-    print(f"[boot] tokenizer loaded. is_fast={getattr(t, 'is_fast', None)}")
+    # 1) Tokenizer: try fast first, then slow (SentencePiece) if needed
+    tok_errs = []
+    for use_fast in (True, False):
+        try:
+            tokenizer_candidate = AutoTokenizer.from_pretrained(
+                MODEL_ID,
+                token=HF_TOKEN,          # new param name (works on recent transformers)
+                use_fast=use_fast,
+                trust_remote_code=True,  # safe here; your repo
+            )
+            tokenizer = tokenizer_candidate
+            break
+        except Exception as e:
+            tok_errs.append(f"use_fast={use_fast}: {e}")
+            tokenizer_candidate = None
 
+    if tokenizer is None:
+        raise RuntimeError(
+            "Failed to load tokenizer. Tried fast and slow.\n" + "\n".join(tok_errs)
+        )
+
+    # 2) Model
     dtype = torch.float16 if torch.cuda.is_available() else torch.float32
-    mdl_kwargs = dict(
-        torch_dtype=dtype,
-        device_map="auto",
-        low_cpu_mem_usage=True,
-    )
-    if HF_TOKEN:
-        mdl_kwargs["token"] = HF_TOKEN
+    try:
+        model_candidate = AutoModelForCausalLM.from_pretrained(
+            MODEL_ID,
+            token=HF_TOKEN,
+            torch_dtype=dtype,
+            device_map="auto",
+            trust_remote_code=True,
+            low_cpu_mem_usage=True,
+        )
+        model_candidate.eval()
+        model = model_candidate
+    except Exception as e:
+        raise RuntimeError(f"Failed to load model '{MODEL_ID}': {e}")
 
-    print(f"[boot] loading model (dtype={dtype})…")
-    m = AutoModelForCausalLM.from_pretrained(MODEL_ID, **mdl_kwargs)
-    print("[boot] model loaded.")
-
-    if t.pad_token_id is None and t.eos_token_id is not None:
-        t.pad_token = t.eos_token
-
-    tokenizer, model = t, m
 
 def _build_prompt_from_messages(messages: List[Dict[str, str]]) -> str:
+    """Use chat template when available; otherwise simple fallback."""
     _lazy_load()
     if hasattr(tokenizer, "apply_chat_template"):
         return tokenizer.apply_chat_template(
-            messages, tokenize=False, add_generation_prompt=True
+            messages,
+            tokenize=False,
+            add_generation_prompt=True
         )
-    parts = [f"{m.get('role','user')}: {m.get('content','')}" for m in messages]
-    parts.append("assistant:")
-    return "\n".join(parts)
+    # fallback
+    lines = [f"{m.get('role','user')}: {m.get('content','')}" for m in messages]
+    lines.append("assistant:")
+    return "\n".join(lines)
+
 
 def _generate(prompt: str, max_new_tokens: int = 200, temperature: float = 0.7) -> str:
     _lazy_load()
     inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
-    with torch.inference_mode():
-        out = model.generate(
+    with torch.no_grad():
+        out_ids = model.generate(
             **inputs,
             max_new_tokens=max_new_tokens,
             do_sample=True,
             temperature=temperature,
-            pad_token_id=tokenizer.pad_token_id,
+            top_p=0.9,
+            pad_token_id=tokenizer.eos_token_id,
         )
-    return tokenizer.decode(out[0], skip_special_tokens=True)
+    # return ONLY the newly generated text (strip the prompt)
+    gen_ids = out_ids[0][inputs["input_ids"].shape[1]:]
+    return tokenizer.decode(gen_ids, skip_special_tokens=True).strip()
+
 
 def handler(event: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    RunPod handler. Accepts:
+      {
+        "input": {
+          "prompt": "...",                        # or
+          "messages": [{"role":"user","content":"..."}],
+          "max_new_tokens": 200,
+          "temperature": 0.7
+        }
+      }
+    """
     try:
-        inp = event.get("input") or {}
+        inp = (event or {}).get("input", {}) or {}
         prompt = inp.get("prompt")
-        msgs = inp.get("messages")
+        messages = inp.get("messages")
 
-        # cheap health/debug hooks:
-        if (prompt or "").strip() == "__debug__":
-            _lazy_load()
+        # Debug hook to surface environment quickly from curl:
+        if prompt == "__debug__":
             return {
-                "transformers": transformers.__version__,
-                "tokenizers": tokenizers.__version__,
-                "is_fast": getattr(tokenizer, "is_fast", None),
-                "cuda": torch.cuda.is_available()
+                "model_id": MODEL_ID,
+                "has_token": bool(HF_TOKEN),
+                "cuda": torch.cuda.is_available(),
+                "transformers": transformers_version,
+                "hub": hub_version,
+                "env_seen": {
+                    k: os.getenv(k)
+                    for k in ["HF_TOKEN", "HUGGINGFACE_HUB_TOKEN", "HF_HOME", "TRANSFORMERS_CACHE"]
+                },
             }
 
-        if msgs and not prompt:
-            prompt = _build_prompt_from_messages(msgs)
+        if not prompt and messages:
+            prompt = _build_prompt_from_messages(messages)
         if not prompt:
             return {"error": "Provide either 'prompt' or 'messages' in input."}
 
-        max_new = int(inp.get("max_new_tokens", 200))
-        temp = float(inp.get("temperature", 0.7))
-        text = _generate(prompt, max_new_tokens=max_new, temperature=temp)
+        max_new_tokens = int(inp.get("max_new_tokens", 200))
+        temperature = float(inp.get("temperature", 0.7))
+
+        text = _generate(prompt, max_new_tokens=max_new_tokens, temperature=temperature)
         return {"output": text}
+
     except Exception as e:
         return {"error": f"{type(e).__name__}: {e}"}
 
+
+# Start RunPod worker
 runpod.serverless.start({"handler": handler})
