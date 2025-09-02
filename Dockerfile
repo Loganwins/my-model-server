@@ -1,17 +1,21 @@
-FROM pytorch/pytorch:2.3.1-cuda12.1-cudnn8-runtime
-
-WORKDIR /app
-RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
-
-COPY requirements.txt .
-RUN python -m pip install --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt \
-      --extra-index-url https://download.pytorch.org/whl/cu121
-
-COPY . .
+FROM python:3.10-slim
 
 ENV PYTHONUNBUFFERED=1 \
-    TRANSFORMERS_NO_ADVISORY_WARNINGS=1 \
-    HF_HOME=/root/.cache/huggingface
+    PIP_NO_CACHE_DIR=1 \
+    TOKENIZERS_PARALLELISM=false \
+    HF_HOME=/root/.cache/huggingface \
+    HUGGINGFACE_HUB_CACHE=/root/.cache/huggingface \
+    HF_HUB_ENABLE_HF_TRANSFER=1
+    # DO NOT set TRANSFORMERS_NO_FAST_TOKENIZER here
 
-CMD ["python", "app.py"]
+RUN apt-get update && apt-get install -y --no-install-recommends git && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY requirements.txt /app/requirements.txt
+RUN python -m pip install --upgrade pip && pip install -r requirements.txt
+
+COPY app.py /app/app.py
+
+EXPOSE 8000
+CMD ["python", "-u", "app.py"]
