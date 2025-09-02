@@ -3,6 +3,8 @@ import runpod
 from typing import List, Dict, Any
 
 import torch
+import transformers
+import tokenizers
 from transformers import AutoTokenizer, AutoModelForCausalLM
 
 HF_TOKEN = os.getenv("HF_TOKEN")
@@ -11,13 +13,23 @@ MODEL_ID = "askfjhaskjgh/UbermenschetienASI"
 tokenizer = None
 model = None
 
+def _boot_banner():
+    print("=== [boot] ===")
+    print(f"[boot] transformers: {transformers.__version__}")
+    print(f"[boot] tokenizers  : {tokenizers.__version__}")
+    print(f"[boot] CUDA avail? : {torch.cuda.is_available()}")
+    print(f"[boot] ENV TRANSFORMERS_NO_FAST_TOKENIZER = {os.getenv('TRANSFORMERS_NO_FAST_TOKENIZER')}")
+    print("================")
+
 def _lazy_load():
     """Load the FAST tokenizer (uses tokenizer.json) and the model once."""
     global tokenizer, model
     if tokenizer is not None and model is not None:
         return
 
-    tok_kwargs = dict(use_fast=True)
+    _boot_banner()
+
+    tok_kwargs = dict(use_fast=True)  # <- force FAST
     if HF_TOKEN:
         tok_kwargs["token"] = HF_TOKEN
 
@@ -38,7 +50,6 @@ def _lazy_load():
     m = AutoModelForCausalLM.from_pretrained(MODEL_ID, **mdl_kwargs)
     print("[boot] model loaded.")
 
-    # ensure pad token is set
     if t.pad_token_id is None and t.eos_token_id is not None:
         t.pad_token = t.eos_token
 
@@ -72,6 +83,17 @@ def handler(event: Dict[str, Any]) -> Dict[str, Any]:
         inp = event.get("input") or {}
         prompt = inp.get("prompt")
         msgs = inp.get("messages")
+
+        # cheap health/debug hooks:
+        if (prompt or "").strip() == "__debug__":
+            _lazy_load()
+            return {
+                "transformers": transformers.__version__,
+                "tokenizers": tokenizers.__version__,
+                "is_fast": getattr(tokenizer, "is_fast", None),
+                "cuda": torch.cuda.is_available()
+            }
+
         if msgs and not prompt:
             prompt = _build_prompt_from_messages(msgs)
         if not prompt:
