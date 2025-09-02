@@ -1,13 +1,8 @@
-# Core model stack
-transformers>=4.41.2
-huggingface_hub>=0.23.4
-accelerate>=0.31.0
-safetensors>=0.4.2
-
-# Tokenizer backends / fallbacks
-sentencepiece>=0.2.0
-tiktoken>=0.6.0
-
-# Runtime
-torch
+transformers>=4.43
+accelerate>=0.33
+sentencepiece>=0.2
+tiktoken>=0.7
+protobuf>=4.25
+fastapi
+uvicorn
 runpod
