@@ -4,5 +4,5 @@ accelerate
 safetensors
 runpod
 protobuf>=4.25.3
-sentencepiece
-tiktoken>=0.7.0
+sentencepiece           # harmless; not used if fast tokenizer is present
+tiktoken>=0.7.0         # harmless; not used if fast tokenizer is present
