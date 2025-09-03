@@ -1,6 +1,8 @@
-transformers==4.44.2
-tokenizers==0.19.1
-sentencepiece==0.2.0
+# HF + serverless stack (versions aligned with your runtime logs)
+transformers==4.56.0
+tokenizers==0.22.0
+sentencepiece>=0.1.99,<0.2.0
+protobuf>=4.25.0
 huggingface_hub>=0.24.0
 accelerate>=0.33.0
 runpod==1.5.2
